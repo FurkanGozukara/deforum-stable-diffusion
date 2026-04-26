@@ -20,8 +20,62 @@
 # !! }}
 #@markdown **NVIDIA GPU**
 import subprocess, os, sys
-sub_p_res = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total,memory.free', '--format=csv,noheader'], stdout=subprocess.PIPE).stdout.decode('utf-8')
-print(f"{sub_p_res[:-1]}")
+
+try:
+    sub_p_res = subprocess.run(
+        ['nvidia-smi', '--query-gpu=name,memory.total,memory.free', '--format=csv,noheader'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    ).stdout.decode('utf-8')
+    print(f"{sub_p_res[:-1]}")
+except FileNotFoundError:
+    print("nvidia-smi was not found; continuing without GPU summary")
+
+
+REPO_DIR = os.path.abspath(os.path.dirname(__file__)) if "__file__" in globals() else os.getcwd()
+
+
+def find_webui_dir(repo_dir):
+    current = os.path.abspath(repo_dir)
+    for _ in range(4):
+        if os.path.isdir(os.path.join(current, "models", "Stable-diffusion")) and os.path.isdir(
+            os.path.join(current, "extensions")
+        ):
+            return current
+        current = os.path.dirname(current)
+
+    sibling_webui = os.path.abspath(os.path.join(repo_dir, os.pardir, "stable-diffusion-webui"))
+    if os.path.isdir(sibling_webui):
+        return sibling_webui
+    return None
+
+
+WEBUI_DIR = find_webui_dir(REPO_DIR)
+DEFAULT_WEBUI_MODELS_PATH = (
+    os.path.join(WEBUI_DIR, "models", "Stable-diffusion") if WEBUI_DIR else os.path.join(REPO_DIR, "models")
+)
+
+
+def env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in ("1", "true", "yes", "on")
+
+
+def env_int(name, default):
+    value = os.environ.get(name)
+    return default if value is None else int(value)
+
+
+def env_float(name, default):
+    value = os.environ.get(name)
+    return default if value is None else float(value)
+
+
+def env_str(name, default):
+    return os.environ.get(name, default)
 
 # %%
 # !! {"metadata":{
@@ -92,10 +146,11 @@ from helpers.prompts import Prompts
 #@markdown **Path Setup**
 
 def PathSetup():
-    models_path = "models" #@param {type:"string"}
-    configs_path = "configs" #@param {type:"string"}
-    output_path = "outputs" #@param {type:"string"}
-    mount_google_drive = True #@param {type:"boolean"}
+    default_models_path = DEFAULT_WEBUI_MODELS_PATH if os.path.isdir(DEFAULT_WEBUI_MODELS_PATH) else "models"
+    models_path = env_str("DEFORUM_MODELS_PATH", default_models_path) #@param {type:"string"}
+    configs_path = env_str("DEFORUM_CONFIGS_PATH", "configs") #@param {type:"string"}
+    output_path = env_str("DEFORUM_OUTPUT_PATH", "outputs") #@param {type:"string"}
+    mount_google_drive = env_bool("DEFORUM_MOUNT_GOOGLE_DRIVE", True) #@param {type:"boolean"}
     models_path_gdrive = "/content/drive/MyDrive/AI/models" #@param {type:"string"}
     output_path_gdrive = "/content/drive/MyDrive/AI/StableDiffusion" #@param {type:"string"}
     return locals()
@@ -111,11 +166,11 @@ root.models_path, root.output_path = get_model_output_paths(root)
 #@markdown **Model Setup**
 
 def ModelSetup():
-    map_location = "cuda" #@param ["cpu", "cuda"]
-    model_config = "v1-inference.yaml" #@param ["custom","v2-inference.yaml","v2-inference-v.yaml","v1-inference.yaml"]
-    model_checkpoint =  "Protogen_V2.2.ckpt" #@param ["custom","v2-1_768-ema-pruned.ckpt","v2-1_512-ema-pruned.ckpt","768-v-ema.ckpt","512-base-ema.ckpt","Protogen_V2.2.ckpt","v1-5-pruned.ckpt","v1-5-pruned-emaonly.ckpt","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt", "robo-diffusion-v1.ckpt","wd-v1-3-float16.ckpt"]
-    custom_config_path = "" #@param {type:"string"}
-    custom_checkpoint_path = "" #@param {type:"string"}
+    map_location = env_str("DEFORUM_MAP_LOCATION", "cuda") #@param ["cpu", "cuda"]
+    model_config = env_str("DEFORUM_MODEL_CONFIG", "v1-inference.yaml") #@param ["custom","v2-inference.yaml","v2-inference-v.yaml","v1-inference.yaml"]
+    model_checkpoint =  env_str("DEFORUM_MODEL_CHECKPOINT", "Protogen_V2.2.ckpt") #@param ["custom","v2-1_768-ema-pruned.ckpt","v2-1_512-ema-pruned.ckpt","768-v-ema.ckpt","512-base-ema.ckpt","Protogen_V2.2.ckpt","v1-5-pruned.ckpt","v1-5-pruned-emaonly.ckpt","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt", "robo-diffusion-v1.ckpt","wd-v1-3-float16.ckpt"]
+    custom_config_path = env_str("DEFORUM_CUSTOM_CONFIG_PATH", "") #@param {type:"string"}
+    custom_checkpoint_path = env_str("DEFORUM_CUSTOM_CHECKPOINT_PATH", "") #@param {type:"string"}
     return locals()
 
 root.__dict__.update(ModelSetup())
@@ -254,31 +309,31 @@ custom_settings_file = "/content/drive/MyDrive/Settings.txt"#@param {type:"strin
 
 def DeforumArgs():
     #@markdown **Image Settings**
-    W = 512 #@param
-    H = 512 #@param
+    W = env_int("DEFORUM_W", 512) #@param
+    H = env_int("DEFORUM_H", 512) #@param
     W, H = map(lambda x: x - x % 64, (W, H))  # resize to integer multiple of 64
     bit_depth_output = 8 #@param [8, 16, 32] {type:"raw"}
 
     #@markdown **Sampling Settings**
-    seed = -1 #@param
-    sampler = 'euler_ancestral' #@param ["klms","dpm2","dpm2_ancestral","heun","euler","euler_ancestral","plms", "ddim", "dpm_fast", "dpm_adaptive", "dpmpp_2s_a", "dpmpp_2m"]
-    steps = 50 #@param
-    scale = 7 #@param
+    seed = env_int("DEFORUM_SEED", -1) #@param
+    sampler = env_str("DEFORUM_SAMPLER", 'euler_ancestral') #@param ["klms","dpm2","dpm2_ancestral","heun","euler","euler_ancestral","plms", "ddim", "dpm_fast", "dpm_adaptive", "dpmpp_2s_a", "dpmpp_2m"]
+    steps = env_int("DEFORUM_STEPS", 50) #@param
+    scale = env_float("DEFORUM_SCALE", 7) #@param
     ddim_eta = 0.0 #@param
     dynamic_threshold = None
     static_threshold = None   
 
     #@markdown **Save & Display Settings**
-    save_samples = True #@param {type:"boolean"}
-    save_settings = True #@param {type:"boolean"}
-    display_samples = True #@param {type:"boolean"}
+    save_samples = env_bool("DEFORUM_SAVE_SAMPLES", True) #@param {type:"boolean"}
+    save_settings = env_bool("DEFORUM_SAVE_SETTINGS", True) #@param {type:"boolean"}
+    display_samples = env_bool("DEFORUM_DISPLAY_SAMPLES", True) #@param {type:"boolean"}
     save_sample_per_step = False #@param {type:"boolean"}
     show_sample_per_step = False #@param {type:"boolean"}
 
     #@markdown **Batch Settings**
-    n_batch = 1 #@param
-    n_samples = 1 #@param
-    batch_name = "StableFun" #@param {type:"string"}
+    n_batch = env_int("DEFORUM_N_BATCH", 1) #@param
+    n_samples = env_int("DEFORUM_N_SAMPLES", 1) #@param
+    batch_name = env_str("DEFORUM_BATCH_NAME", "StableFun") #@param {type:"string"}
     filename_format = "{timestring}_{index}_{prompt}.png" #@param ["{timestring}_{index}_{seed}.png","{timestring}_{index}_{prompt}.png"]
     seed_behavior = "iter" #@param ["iter","fixed","random","ladder","alternate"]
     seed_iter_N = 1 #@param {type:'integer'}
@@ -338,11 +393,11 @@ def DeforumArgs():
     clamp_grad_threshold = 0.2 #@param {type:"number"}
     clamp_start = 0.2 #@param
     clamp_stop = 0.01 #@param
-    grad_inject_timing = list(range(1,10)) #@param
+    grad_inject_timing = list(range(1, min(max(steps, 1), 9) + 1)) #@param
 
     #@markdown **Speed vs VRAM Settings**
     cond_uncond_sync = True #@param {type:"boolean"}
-    precision = 'autocast' 
+    precision = env_str("DEFORUM_PRECISION", 'fp32')
     C = 4
     f = 8
 

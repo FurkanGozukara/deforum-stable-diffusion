@@ -191,10 +191,11 @@ def load_model(root, load_on_run_all=True, check_sha256=True, map_location="cuda
     # checkpoint path or download
     ckpt_path = root.custom_checkpoint_path if root.model_checkpoint == "custom" else os.path.join(root.models_path, root.model_checkpoint)
     ckpt_valid = True
+    model_info = model_map.get(root.model_checkpoint, {})
 
     if os.path.exists(ckpt_path):
         pass
-    elif 'url' in model_map[root.model_checkpoint]:
+    elif model_info.get('url'):
         download_model(model_map,root)
     else:
         print(f"Please download model checkpoint and place in {os.path.join(root.models_path, root.model_checkpoint)}")
@@ -207,11 +208,12 @@ def load_model(root, load_on_run_all=True, check_sha256=True, map_location="cuda
         try:
             import hashlib
             print("..checking sha256")
+            sha256 = hashlib.sha256()
             with open(ckpt_path, "rb") as f:
-                bytes = f.read() 
-                hash = hashlib.sha256(bytes).hexdigest()
-                del bytes
-            if model_map[root.model_checkpoint]["sha256"] == hash:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    sha256.update(chunk)
+            hash_value = sha256.hexdigest()
+            if model_map[root.model_checkpoint]["sha256"] == hash_value:
                 print("..hash is correct")
             else:
                 print("..hash in not correct")
@@ -232,7 +234,13 @@ def load_model(root, load_on_run_all=True, check_sha256=True, map_location="cuda
             sd = pl_sd["state_dict"]
         except:
             sd = pl_sd
-        torch.set_default_dtype(torch.float16)
+        model_dtype = os.environ.get("DEFORUM_MODEL_DTYPE", "float32").lower()
+        if model_dtype in ("fp32", "float32"):
+            torch.set_default_dtype(torch.float32)
+        elif model_dtype in ("fp16", "float16"):
+            torch.set_default_dtype(torch.float16)
+        else:
+            raise ValueError("DEFORUM_MODEL_DTYPE must be fp16 or fp32")
         model = instantiate_from_config(config.model)
         torch.set_default_dtype(torch.float32)
         m, u = model.load_state_dict(sd, strict=False)
@@ -244,18 +252,32 @@ def load_model(root, load_on_run_all=True, check_sha256=True, map_location="cuda
                 print("unexpected keys:")
                 print(u)
 
-        model = model.half().to(device)
+        if model_dtype in ("fp32", "float32"):
+            model = model.float()
+        else:
+            model = model.half()
+        model = model.to(device)
         model.eval()
         return model
 
-    if load_on_run_all and ckpt_valid:
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model = None
+
+    if not ckpt_valid:
+        raise FileNotFoundError(
+            f"Model checkpoint was not found: {ckpt_path}. "
+            "Set root.model_checkpoint to a known downloadable checkpoint, "
+            "or set model_checkpoint='custom' and custom_checkpoint_path to an existing file."
+        )
+
+    if load_on_run_all:
         local_config = OmegaConf.load(f"{ckpt_config_path}")
-        model = load_model_from_config(local_config, f"{ckpt_path}", map_location)
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        model = load_model_from_config(local_config, f"{ckpt_path}", device=device, map_location=map_location)
         model = model.to(device)
 
     autoencoder_version = "sd-v1" #TODO this will be different for different models
-    model.linear_decode = make_linear_decode(autoencoder_version, device)
+    if model is not None:
+        model.linear_decode = make_linear_decode(autoencoder_version, device)
 
     return model, device
 

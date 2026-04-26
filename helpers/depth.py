@@ -3,6 +3,7 @@ import math
 import numpy as np
 import os
 import requests
+import sys
 import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
@@ -17,9 +18,11 @@ from midas.transforms import Resize, NormalizeImage, PrepareForNet
 try:
     from numpngw import write_png
 except ModuleNotFoundError:
-    print(ModuleNotFoundError)
     import subprocess
-    running = subprocess.run(['pip', 'install', 'numpngw'],stdout=subprocess.PIPE).stdout.decode('utf-8')
+    running = subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', 'numpngw'],
+        stdout=subprocess.PIPE,
+    ).stdout.decode('utf-8')
     print(running)
     from numpngw import write_png
 

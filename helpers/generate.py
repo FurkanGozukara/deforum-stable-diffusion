@@ -177,8 +177,10 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
         [aesthetics_loss_fn,        args.aesthetics_scale]
     ]
 
+    uses_conditioning_grad = any(cond_fs[1] != 0 for cond_fs in loss_fns_scales)
+
     # Conditioning gradients not implemented for ddim or PLMS
-    assert not( any([cond_fs[1]!=0 for cond_fs in loss_fns_scales]) and (args.sampler in ["ddim","plms"]) ), "Conditioning gradients not implemented for ddim or plms. Please use a different sampler."
+    assert not( uses_conditioning_grad and (args.sampler in ["ddim","plms"]) ), "Conditioning gradients not implemented for ddim or plms. Please use a different sampler."
 
     callback = SamplerCallback(args=args,
                             root=root,
@@ -190,7 +192,9 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
 
     clamp_fn = threshold_by(threshold=args.clamp_grad_threshold, threshold_type=args.grad_threshold_type, clamp_schedule=args.clamp_schedule)
 
-    grad_inject_timing_fn = make_inject_timing_fn(args.grad_inject_timing, model_wrap, args.steps)
+    grad_inject_timing_fn = None
+    if uses_conditioning_grad:
+        grad_inject_timing_fn = make_inject_timing_fn(args.grad_inject_timing, model_wrap, args.steps)
 
     cfg_model = CFGDenoiserWithGrad(model_wrap, 
                                     loss_fns_scales, 
@@ -278,6 +282,12 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
                         results.append(x_samples.clone())
 
                     x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
+                    if not torch.isfinite(x_samples).all():
+                        raise FloatingPointError(
+                            "Generated non-finite image tensors. "
+                            "Use DEFORUM_MODEL_DTYPE=fp32 and DEFORUM_PRECISION=fp32, "
+                            "or reduce the render settings."
+                        )
 
                     if return_c:
                         results.append(c.clone())

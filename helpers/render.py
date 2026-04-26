@@ -1,5 +1,6 @@
 import os
 import json
+import sys
 from IPython import display
 import random
 from torchvision.utils import make_grid
@@ -25,9 +26,11 @@ from .interpolation import interpolate
 try:
     from numpngw import write_png
 except ModuleNotFoundError:
-    print(ModuleNotFoundError)
     import subprocess
-    running = subprocess.run(['pip', 'install', 'numpngw'],stdout=subprocess.PIPE).stdout.decode('utf-8')
+    running = subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', 'numpngw'],
+        stdout=subprocess.PIPE,
+    ).stdout.decode('utf-8')
     print(running)
     from numpngw import write_png
 
